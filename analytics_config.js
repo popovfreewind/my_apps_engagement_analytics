@@ -24,6 +24,7 @@ const ENGAGEMENT_CHANNEL_NAME_ALIASES = {
     'Never Have I Ever - Sexy & Wild Game',
     'Never Have I Ever: The Ultimate Party Game - Starter, Adventures, Sexy & Vicious',
     'Never Have I Party - Sexy & Wild Game',
+    'Never Have I Ever - Sexy & Wild',
     'Never have I ever'
   ],
   'Rolling Maze': [
