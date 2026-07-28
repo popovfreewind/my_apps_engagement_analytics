@@ -5,6 +5,16 @@ const ENGAGEMENT_SUBJECT_FILTERS = [
 
 const ENGAGEMENT_DEDUP_KEY = 'row_key';
 
+// BigQuery destination for engagement data (replaces the Sheets-based pipeline)
+const BIGQUERY_CONFIG = {
+  PROJECT_ID: 'freewind-software',
+  DATASET_ID: 'roku_analytics',
+  TABLE_ENGAGEMENT: 'engagement_daily',
+  // Location of the roku_analytics dataset; must match its actual location or
+  // BigQuery.Jobs.query will fail to find the job/dataset.
+  LOCATION: 'US'
+};
+
 const ENGAGEMENT_HEADERS = [
   ENGAGEMENT_DEDUP_KEY,
   'date',

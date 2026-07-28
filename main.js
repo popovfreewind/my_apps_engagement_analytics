@@ -1,10 +1,6 @@
 function proceedEngagementImport() {
-    const sheet = getOrCreateSheetByName(ENGAGEMENT_SHEET);
-    importEngagementFromZipEmails(sheet, {
-        neededHeaders: ENGAGEMENT_HEADERS,
-        dedupeKeyColumn: ENGAGEMENT_DEDUP_KEY,
-        subjectFilters: ENGAGEMENT_SUBJECT_FILTERS,
-        firstDataRow: FIRST_DATA_ROW
+    importEngagementFromZipEmails({
+        subjectFilters: ENGAGEMENT_SUBJECT_FILTERS
     });
 }
 
@@ -17,12 +13,8 @@ function runAllAnalytics() {
 // --- Batch entry points (for scheduled trigger, processes 1 thread per run) ---
 
 function proceedEngagementImportBatch() {
-    const sheet = getOrCreateSheetByName(ENGAGEMENT_SHEET);
-    importEngagementFromZipEmails(sheet, {
-        neededHeaders: ENGAGEMENT_HEADERS,
-        dedupeKeyColumn: ENGAGEMENT_DEDUP_KEY,
+    importEngagementFromZipEmails({
         subjectFilters: ENGAGEMENT_SUBJECT_FILTERS,
-        firstDataRow: FIRST_DATA_ROW,
         maxThreads: 1
     });
 }
@@ -33,7 +25,12 @@ function runAllAnalyticsBatch() {
     Logger.log('=== runAllAnalyticsBatch COMPLETE @ %s ===', new Date());
 }
 
-// --- Maintenance entry points ---
+// --- Maintenance entry points (DEPRECATED) ---
+// Engagement data now streams directly into BigQuery (see BIGQUERY_CONFIG /
+// engagement_import.js) and is no longer written to Google Sheets. These
+// entry points are kept only for one-off cleanup of the legacy
+// ENGAGEMENT_SHEET spreadsheet, if it still exists. Dedup for BigQuery is
+// handled via row_key + streaming insertId / SQL, not these functions.
 
 function removeEngagementDuplicates() {
     const sheet = getSheetByName(ENGAGEMENT_SHEET);

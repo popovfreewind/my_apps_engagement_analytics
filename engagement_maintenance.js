@@ -1,3 +1,12 @@
+/**
+ * @deprecated Engagement data is now streamed directly into BigQuery
+ * (freewind-software.roku_analytics.engagement_daily) and is no longer
+ * appended to Google Sheets — see engagement_import.js / BIGQUERY_CONFIG.
+ * Channel name normalization now happens inline while building each row
+ * (via normalizeChannelNameForEngagement) before it is inserted into
+ * BigQuery, and row_key correctness is guaranteed by buildRowKey. This is
+ * kept only to clean up any pre-migration data left in a legacy spreadsheet.
+ */
 function normalizeEngagementChannelNamesInSheet(sheet) {
   if (!sheet) {
     throw new Error('normalizeEngagementChannelNames: engagement sheet not found');

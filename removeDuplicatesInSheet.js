@@ -1,4 +1,12 @@
-
+/**
+ * @deprecated Engagement data is now streamed directly into BigQuery
+ * (freewind-software.roku_analytics.engagement_daily) and is no longer
+ * appended to Google Sheets — see engagement_import.js / BIGQUERY_CONFIG.
+ * De-duplication is handled via each row's `row_key` (used as the BigQuery
+ * streaming insertId) and/or downstream BigQuery SQL, not this function.
+ * This is kept only to clean up any pre-migration data left in a legacy
+ * spreadsheet.
+ */
 function removeDuplicatesInSheet(sheet, key) {
   if (!key || typeof key !== 'string') {
     throw new Error('removeDuplicatesInSheet: keyColumnName is required');

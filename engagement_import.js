@@ -1,43 +1,15 @@
-function importEngagementFromZipEmails(sheet, options) {
+function importEngagementFromZipEmails(options) {
   const config = options || {};
-  const neededHeaders = config.neededHeaders;
-  const dedupeKeyColumn = config.dedupeKeyColumn;
   const subjectFilters = config.subjectFilters;
-  const firstDataRow = config.firstDataRow;
   const maxThreads = config.maxThreads || 500;
 
-  if (!Array.isArray(neededHeaders) || neededHeaders.length === 0) {
-    throw new Error('importEngagementFromZipEmails: options.neededHeaders is required');
-  }
-  if (!dedupeKeyColumn || typeof dedupeKeyColumn !== 'string') {
-    throw new Error('importEngagementFromZipEmails: options.dedupeKeyColumn is required');
-  }
   if (!Array.isArray(subjectFilters)) {
     throw new Error('importEngagementFromZipEmails: options.subjectFilters must be an array');
   }
-  if (typeof firstDataRow !== 'number' || firstDataRow < 1) {
-    throw new Error('importEngagementFromZipEmails: options.firstDataRow must be a positive number');
-  }
 
-  ensureEngagementSheetHeaders(sheet, neededHeaders);
+  const rowsToInsert = [];
+  const seenRowKeysThisRun = new Set();
 
-  const keyColIndexInSheet = getColumnIndexByHeader(neededHeaders, dedupeKeyColumn);
-  if (keyColIndexInSheet === -1) {
-    throw new Error('importEngagementFromZipEmails: dedupeKeyColumn not found in neededHeaders');
-  }
-
-  const dataRowCount = Math.max(0, sheet.getLastRow() - (firstDataRow - 1));
-  const existingKeys = new Set(
-    dataRowCount > 0
-      ? sheet
-        .getRange(firstDataRow, keyColIndexInSheet, dataRowCount)
-        .getValues()
-        .flat()
-        .map(function (key) { return String(key).trim(); })
-      : []
-  );
-
-  let totalAppended = 0;
   Logger.log('=== importEngagementFromZipEmails START @ %s ===', new Date());
 
   subjectFilters.forEach(function (subject) {
@@ -66,44 +38,40 @@ function importEngagementFromZipEmails(sheet, options) {
           const countryCode = extractCountryCode(csvBlobs);
           const dailyMetricsMap = buildDailyMetricsMap(csvBlobs);
           const sortedDates = Object.keys(dailyMetricsMap).sort();
-          const rowsToAppend = [];
+          let rowsFromZip = 0;
 
           sortedDates.forEach(function (dateKey) {
             const metrics = dailyMetricsMap[dateKey] || {};
-            const rowKey = [dateKey, channelName, countryCode].join('|');
+            const dateStr = formatDateToYMD(dateKey);
+            if (!dateStr) {
+              return;
+            }
 
-            if (!dateKey || existingKeys.has(rowKey)) {
+            const rowKey = buildRowKey(dateStr, channelName, countryCode);
+            if (seenRowKeysThisRun.has(rowKey)) {
               return;
             }
 
             const rowObject = {
               row_key: rowKey,
-              date: dateKey,
+              date: dateStr,
               channel_name: channelName,
               country_code: countryCode,
-              viewers: valueOrEmpty(metrics.viewers),
-              visitors: valueOrEmpty(metrics.visitors),
-              average_minutes_per_viewer: valueOrEmpty(metrics.average_minutes_per_viewer),
-              channel_installs: valueOrEmpty(metrics.channel_installs),
-              channel_uninstalls: valueOrEmpty(metrics.channel_uninstalls),
-              net_installs: valueOrEmpty(metrics.net_installs),
-              cumulative_installs: valueOrEmpty(metrics.cumulative_installs)
+              viewers: safeParseInt(metrics.viewers),
+              visitors: safeParseInt(metrics.visitors),
+              average_minutes_per_viewer: safeParseFloat(metrics.average_minutes_per_viewer),
+              channel_installs: safeParseInt(metrics.channel_installs),
+              channel_uninstalls: safeParseInt(metrics.channel_uninstalls),
+              net_installs: safeParseInt(metrics.net_installs),
+              cumulative_installs: safeParseInt(metrics.cumulative_installs)
             };
 
-            rowsToAppend.push(neededHeaders.map(function (header) {
-              return rowObject.hasOwnProperty(header) ? rowObject[header] : '';
-            }));
-            existingKeys.add(rowKey);
+            rowsToInsert.push(rowObject);
+            seenRowKeysThisRun.add(rowKey);
+            rowsFromZip++;
           });
 
-          if (rowsToAppend.length > 0) {
-            const nextRow = sheet.getLastRow() + 1;
-            sheet.getRange(nextRow, 1, rowsToAppend.length, neededHeaders.length).setValues(rowsToAppend);
-            totalAppended += rowsToAppend.length;
-            Logger.log('Appended %d rows from ZIP "%s".', rowsToAppend.length, attachment.getName());
-          } else {
-            Logger.log('No new rows to append from ZIP "%s".', attachment.getName());
-          }
+          Logger.log('Parsed %d row(s) from ZIP "%s".', rowsFromZip, attachment.getName());
         });
       });
 
@@ -112,27 +80,129 @@ function importEngagementFromZipEmails(sheet, options) {
     });
   });
 
-  Logger.log('=== importEngagementFromZipEmails COMPLETE: %d total rows appended ===', totalAppended);
-}
-
-function ensureEngagementSheetHeaders(sheet, headers) {
-  if (!sheet) {
-    throw new Error('ensureEngagementSheetHeaders: sheet is required');
-  }
-
-  if (sheet.getLastRow() === 0) {
-    sheet.getRange(1, 1, 1, headers.length).setValues([headers]);
+  if (rowsToInsert.length === 0) {
+    Logger.log('No new records found. Skipping BigQuery insert.');
     return;
   }
 
-  const existingHeaderValues = sheet.getRange(1, 1, 1, headers.length).getValues()[0];
-  const hasMismatch = headers.some(function (header, index) {
-    return String(existingHeaderValues[index] || '').trim() !== header;
-  });
+  const batchDates = rowsToInsert.map(function (row) { return row.date; });
+  const minDate = batchDates.reduce(function (a, b) { return a < b ? a : b; });
+  const maxDate = batchDates.reduce(function (a, b) { return a > b ? a : b; });
 
-  if (hasMismatch) {
-    sheet.getRange(1, 1, 1, headers.length).setValues([headers]);
+  const existingRowKeys = fetchExistingRowKeysInDateRange(minDate, maxDate);
+  const newRows = rowsToInsert.filter(function (row) { return !existingRowKeys.has(row.row_key); });
+
+  Logger.log(
+    'Batch dates: %s to %s. Incoming rows: %d, Already in DB: %d, New rows to insert: %d',
+    minDate, maxDate, rowsToInsert.length, rowsToInsert.length - newRows.length, newRows.length
+  );
+
+  if (newRows.length === 0) {
+    Logger.log('No new records found. Skipping BigQuery insert.');
+    return;
   }
+
+  const insertedCount = insertEngagementRowsIntoBigQuery(newRows);
+
+  Logger.log('=== importEngagementFromZipEmails COMPLETE: %d total rows inserted ===', insertedCount);
+}
+
+/**
+ * Queries BigQuery for `row_key`s that already exist within [minDate, maxDate]
+ * (inclusive, both 'YYYY-MM-DD' strings) in engagement_daily, so the caller
+ * can insert only genuinely new rows ("insert only if not exists"). Handles
+ * asynchronous job completion and result pagination.
+ */
+function fetchExistingRowKeysInDateRange(minDate, maxDate) {
+  const request = {
+    query: 'SELECT row_key FROM `' + BIGQUERY_CONFIG.PROJECT_ID + '.' + BIGQUERY_CONFIG.DATASET_ID + '.' + BIGQUERY_CONFIG.TABLE_ENGAGEMENT + '` WHERE date BETWEEN @minDate AND @maxDate',
+    useLegacySql: false,
+    parameterMode: 'NAMED',
+    queryParameters: [
+      { name: 'minDate', parameterType: { type: 'DATE' }, parameterValue: { value: minDate } },
+      { name: 'maxDate', parameterType: { type: 'DATE' }, parameterValue: { value: maxDate } }
+    ],
+    location: BIGQUERY_CONFIG.LOCATION
+  };
+
+  let queryResults = BigQuery.Jobs.query(request, BIGQUERY_CONFIG.PROJECT_ID);
+  const jobId = queryResults.jobReference.jobId;
+
+  let sleepTimeMs = 500;
+  while (!queryResults.jobComplete) {
+    Utilities.sleep(sleepTimeMs);
+    sleepTimeMs = Math.min(sleepTimeMs * 2, 4000);
+    queryResults = BigQuery.Jobs.getQueryResults(BIGQUERY_CONFIG.PROJECT_ID, jobId, { location: BIGQUERY_CONFIG.LOCATION });
+  }
+
+  const existingKeys = new Set();
+  (queryResults.rows || []).forEach(function (row) { existingKeys.add(row.f[0].v); });
+
+  while (queryResults.pageToken) {
+    queryResults = BigQuery.Jobs.getQueryResults(BIGQUERY_CONFIG.PROJECT_ID, jobId, {
+      pageToken: queryResults.pageToken,
+      location: BIGQUERY_CONFIG.LOCATION
+    });
+    (queryResults.rows || []).forEach(function (row) { existingKeys.add(row.f[0].v); });
+  }
+
+  return existingKeys;
+}
+
+/**
+ * Streams rows into BigQuery.engagement_daily via BigQuery.Tabledata.insertAll,
+ * batching in chunks of at most 500 rows per request. Uses each row's
+ * `row_key` as the BigQuery `insertId` to get best-effort de-duplication on
+ * the streaming buffer. Returns the number of rows successfully sent
+ * (BigQuery-reported per-row insertErrors are logged, not thrown).
+ */
+function insertEngagementRowsIntoBigQuery(rows) {
+  if (!Array.isArray(rows) || rows.length === 0) {
+    Logger.log('insertEngagementRowsIntoBigQuery: no rows to insert.');
+    return 0;
+  }
+
+  const CHUNK_SIZE = 500;
+  let insertedCount = 0;
+
+  for (let offset = 0; offset < rows.length; offset += CHUNK_SIZE) {
+    const chunk = rows.slice(offset, offset + CHUNK_SIZE);
+
+    const requestBody = {
+      rows: chunk.map(function (row) {
+        return { insertId: row.row_key, json: row };
+      }),
+      skipInvalidRows: false,
+      ignoreUnknownValues: false
+    };
+
+    const response = BigQuery.Tabledata.insertAll(
+      requestBody,
+      BIGQUERY_CONFIG.PROJECT_ID,
+      BIGQUERY_CONFIG.DATASET_ID,
+      BIGQUERY_CONFIG.TABLE_ENGAGEMENT
+    );
+
+    if (response && response.insertErrors && response.insertErrors.length > 0) {
+      response.insertErrors.forEach(function (insertError) {
+        const failedRow = chunk[insertError.index];
+        Logger.log(
+          'BigQuery insert error for row_key "%s" (chunk offset %d, index %d): %s',
+          failedRow ? failedRow.row_key : 'unknown',
+          offset,
+          insertError.index,
+          JSON.stringify(insertError.errors)
+        );
+      });
+      insertedCount += chunk.length - response.insertErrors.length;
+    } else {
+      insertedCount += chunk.length;
+    }
+
+    Logger.log('Streamed chunk of %d row(s) to BigQuery (rows %d-%d).', chunk.length, offset, offset + chunk.length - 1);
+  }
+
+  return insertedCount;
 }
 
 function collectCsvBlobsFromZip(zipAttachment) {
@@ -175,7 +245,7 @@ function ingestVisitorsAndViewers(csvBlobs, byDate) {
   }
 
   parsed.rows.forEach(function (row) {
-    const dateKey = normalizeDate(row[dateIdx]);
+    const dateKey = formatDateToYMD(row[dateIdx]);
     if (!dateKey) {
       return;
     }
@@ -206,7 +276,7 @@ function ingestAverageMinutes(csvBlobs, byDate) {
   }
 
   parsed.rows.forEach(function (row) {
-    const dateKey = normalizeDate(row[dateIdx]);
+    const dateKey = formatDateToYMD(row[dateIdx]);
     if (!dateKey) {
       return;
     }
@@ -233,7 +303,7 @@ function ingestInstallGrowth(csvBlobs, byDate) {
   }
 
   parsed.rows.forEach(function (row) {
-    const dateKey = normalizeDate(row[dateIdx]);
+    const dateKey = formatDateToYMD(row[dateIdx]);
     if (!dateKey) {
       return;
     }
@@ -267,7 +337,7 @@ function ingestCumulativeInstalls(csvBlobs, byDate) {
   }
 
   parsed.rows.forEach(function (row) {
-    const dateKey = normalizeDate(row[dateIdx]);
+    const dateKey = formatDateToYMD(row[dateIdx]);
     if (!dateKey) {
       return;
     }
@@ -394,12 +464,6 @@ function findCountryCodeHeaderIndex(headers) {
   return -1;
 }
 
-function normalizeDate(value) {
-  const text = String(value || '').trim();
-  const match = text.match(/\d{4}-\d{2}-\d{2}/);
-  return match ? match[0] : '';
-}
-
 function normalizeCountryCode(value) {
   const text = String(value || '').trim().toLowerCase();
   return text;
@@ -414,8 +478,4 @@ function normalizeNumber(value) {
   const sanitized = text.replace(/,/g, '');
   const parsed = Number(sanitized);
   return Number.isNaN(parsed) ? text : parsed;
-}
-
-function valueOrEmpty(value) {
-  return value === undefined || value === null ? '' : value;
 }
