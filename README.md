@@ -2,9 +2,9 @@
 
 This project contains an engagement-only pipeline in one Apps Script project.
 
-- Engagement data writes to tab: `engagement_daily_db`
+- Engagement data streams directly into BigQuery: `freewind-software.roku_analytics.engagement_daily`.
 
-The tab is in the bound spreadsheet (`SpreadsheetApp.getActiveSpreadsheet()`).
+See `BIGQUERY_CONFIG` in `analytics_config.js` for the target project/dataset/table/location.
 
 ## Account and clasp
 
@@ -23,7 +23,7 @@ clasp push
 ## Entry points
 
 - `proceedEngagementImport()`
-	- Imports engagement ZIP CSVs into `engagement_daily_db`.
+	- Imports engagement ZIP CSVs and streams new rows into BigQuery.
 - `runAllAnalytics()`
 	- Higher-level entry point that runs the engagement import.
 - `proceedEngagementImportBatch()`
@@ -31,18 +31,15 @@ clasp push
 - `runAllAnalyticsBatch()`
 	- Batch orchestrator for engagement import.
 
-## Maintenance entry points
-
-- `removeEngagementDuplicates()` for engagement (`row_key` key)
-
 ## Naming and file structure
 
-- `analytics_config.js`: engagement constants (`ENGAGEMENT_*`) and sheet layout constants
-- `engagement_import.js`: engagement ZIP/CSV importer
+- `analytics_config.js`: engagement constants (`ENGAGEMENT_*`) and BigQuery destination config (`BIGQUERY_CONFIG`)
+- `engagement_import.js`: engagement ZIP/CSV importer, BigQuery existence check, and streaming insert
 - `main.js`: public entry points and orchestration
-- `utils.js` + dedup helper: shared utilities
+- `utils.js`: shared date formatting, row_key building, and safe number parsing helpers
 
 ## Operational notes
 
 - Processed threads are marked as read and moved to trash.
-- Re-running should append zero rows for already imported keys.
+- Before inserting, the importer queries BigQuery for existing `row_key`s within the incoming batch's date range and only streams rows that aren't already present (see `fetchExistingRowKeysInDateRange` / `insertEngagementRowsIntoBigQuery` in `engagement_import.js`). Re-running should insert zero new rows for already-imported keys.
+- The Apps Script project's linked GCP project must have BigQuery access to `freewind-software` for the `BigQuery` advanced service (enabled in `appsscript.json`) to work.

@@ -25,20 +25,3 @@ function runAllAnalyticsBatch() {
     Logger.log('=== runAllAnalyticsBatch COMPLETE @ %s ===', new Date());
 }
 
-// --- Maintenance entry points (DEPRECATED) ---
-// Engagement data now streams directly into BigQuery (see BIGQUERY_CONFIG /
-// engagement_import.js) and is no longer written to Google Sheets. These
-// entry points are kept only for one-off cleanup of the legacy
-// ENGAGEMENT_SHEET spreadsheet, if it still exists. Dedup for BigQuery is
-// handled via row_key + streaming insertId / SQL, not these functions.
-
-function removeEngagementDuplicates() {
-    const sheet = getSheetByName(ENGAGEMENT_SHEET);
-    removeDuplicatesInSheet(sheet, ENGAGEMENT_DEDUP_KEY);
-}
-
-function normalizeEngagementChannelNames() {
-    const sheet = getSheetByName(ENGAGEMENT_SHEET);
-    normalizeEngagementChannelNamesInSheet(sheet);
-}
-

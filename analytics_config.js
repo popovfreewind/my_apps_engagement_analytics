@@ -1,11 +1,8 @@
-const ENGAGEMENT_SHEET = 'engagement_daily_db';
 const ENGAGEMENT_SUBJECT_FILTERS = [
   'Engagement',
 ];
 
-const ENGAGEMENT_DEDUP_KEY = 'row_key';
-
-// BigQuery destination for engagement data (replaces the Sheets-based pipeline)
+// BigQuery destination for engagement data
 const BIGQUERY_CONFIG = {
   PROJECT_ID: 'freewind-software',
   DATASET_ID: 'roku_analytics',
@@ -14,20 +11,6 @@ const BIGQUERY_CONFIG = {
   // BigQuery.Jobs.query will fail to find the job/dataset.
   LOCATION: 'US'
 };
-
-const ENGAGEMENT_HEADERS = [
-  ENGAGEMENT_DEDUP_KEY,
-  'date',
-  'channel_name',
-  'country_code',
-  'viewers',
-  'visitors',
-  'average_minutes_per_viewer',
-  'channel_installs',
-  'channel_uninstalls',
-  'net_installs',
-  'cumulative_installs'
-];
 
 const ENGAGEMENT_CHANNEL_NAME_ALIASES = {
   'Never Have I Ever': [
@@ -55,7 +38,3 @@ const ENGAGEMENT_CHANNEL_NAME_ALIASES = {
     'My First English Coloring Book'
   ]
 };
-
-// Sheet layout constants
-const HEADER_ROW = 1; // where headers live
-const FIRST_DATA_ROW = HEADER_ROW + 1; // first row of actual data
